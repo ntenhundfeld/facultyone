@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Course, Task, Status, Category, Priority, Student, CourseFile } from '../types';
 import { createTask, toggleTaskDone, withTaskPriority, withTaskStatus } from '../utils/tasks';
 import { useDeleteConfirmation } from '../hooks/useDeleteConfirmation';
+import { AttachmentPanel } from './AttachmentPanel';
+import { deleteDesktopAttachment, importDesktopAttachments, openDesktopAttachment } from '../services/attachments';
 import { 
   BookOpen, 
   CheckSquare, 
@@ -12,7 +14,6 @@ import {
   ArrowLeft,
   Plus,
   Trash2,
-  Download,
   Upload,
   Search,
   MoreVertical,
@@ -24,6 +25,8 @@ interface TeachingViewProps {
   courses: Course[];
 
   tasks: Task[];
+
+  dataFilePath?: string | null;
 
   onUpdateCourses: (courses: Course[]) => void;
 
@@ -37,7 +40,7 @@ interface TeachingViewProps {
 
 
 
-export const TeachingView: React.FC<TeachingViewProps> = ({ courses, tasks, onUpdateCourses, onUpdateTasks, onDeleteCourse, initialSelectedId }) => {
+export const TeachingView: React.FC<TeachingViewProps> = ({ courses, tasks, dataFilePath, onUpdateCourses, onUpdateTasks, onDeleteCourse, initialSelectedId }) => {
 
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(initialSelectedId || null);
   const { requestDelete, deleteConfirmationModal } = useDeleteConfirmation();
@@ -70,8 +73,10 @@ export const TeachingView: React.FC<TeachingViewProps> = ({ courses, tasks, onUp
   const [newStudentEmail, setNewStudentEmail] = useState('');
   const [isAddingStudent, setIsAddingStudent] = useState(false);
   const rosterFileInputRef = React.useRef<HTMLInputElement>(null);
-  const courseFileInputRef = React.useRef<HTMLInputElement>(null);
   const [rosterImportMessage, setRosterImportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [isAttachmentBusy, setIsAttachmentBusy] = useState(false);
+  const [activeAttachmentId, setActiveAttachmentId] = useState<string | null>(null);
   
   // Student Detail State
   const [newNote, setNewNote] = useState('');
@@ -144,17 +149,74 @@ export const TeachingView: React.FC<TeachingViewProps> = ({ courses, tasks, onUp
     onUpdateCourses(courses.map(c => c.id === selectedCourse.id ? updatedCourse : c));
   };
 
-  const handleUploadFile = () => {
-    courseFileInputRef.current?.click();
+  const handleUploadFile = async () => {
+    if (!selectedCourse || !dataFilePath) {
+      setAttachmentError('Choose a local JSON save file first so attachments can be copied beside it.');
+      return;
+    }
+
+    try {
+      setIsAttachmentBusy(true);
+      const uploadedFiles = await importDesktopAttachments({
+        dataFilePath,
+        scope: 'teaching',
+        parentId: selectedCourse.id,
+      });
+
+      if (uploadedFiles.length === 0) {
+        return;
+      }
+
+      const updatedCourse = {
+        ...selectedCourse,
+        files: [...selectedCourse.files, ...uploadedFiles],
+      };
+
+      onUpdateCourses(courses.map(c => c.id === selectedCourse.id ? updatedCourse : c));
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not import the selected course files.');
+    } finally {
+      setIsAttachmentBusy(false);
+    }
   };
 
-  const handleDeleteFile = (fileId: string) => {
+  const handleOpenFile = async (file: CourseFile) => {
+    if (!dataFilePath) {
+      return;
+    }
+
+    try {
+      setActiveAttachmentId(file.id);
+      await openDesktopAttachment(dataFilePath, file);
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not open the selected course file.');
+    } finally {
+      setActiveAttachmentId(null);
+    }
+  };
+
+  const handleDeleteFile = async (file: CourseFile) => {
      if (!selectedCourse) return;
-     const updatedCourse = {
-        ...selectedCourse,
-        files: selectedCourse.files.filter(f => f.id !== fileId)
-    };
-    onUpdateCourses(courses.map(c => c.id === selectedCourse.id ? updatedCourse : c));
+
+     try {
+        setActiveAttachmentId(file.id);
+        if (dataFilePath) {
+          await deleteDesktopAttachment(dataFilePath, file);
+        }
+
+        const updatedCourse = {
+          ...selectedCourse,
+          files: selectedCourse.files.filter(f => f.id !== file.id)
+        };
+        onUpdateCourses(courses.map(c => c.id === selectedCourse.id ? updatedCourse : c));
+        setAttachmentError(null);
+     } catch (error) {
+        setAttachmentError(error instanceof Error ? error.message : 'Could not remove the selected course file.');
+     } finally {
+        setActiveAttachmentId(null);
+     }
   };
 
   const handleCreateCourse = (e: React.FormEvent) => {
@@ -251,38 +313,6 @@ export const TeachingView: React.FC<TeachingViewProps> = ({ courses, tasks, onUp
       if (rosterFileInputRef.current) rosterFileInputRef.current.value = '';
     };
     reader.readAsText(file);
-  };
-
-  const handleCourseFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(event.target.files || []);
-    if (!selectedCourse || selectedFiles.length === 0) return;
-
-    const normalizeType = (file: File): CourseFile['type'] => {
-      const extension = file.name.split('.').pop()?.toLowerCase();
-      if (extension === 'pdf') return 'pdf';
-      if (extension === 'doc' || extension === 'docx') return 'doc';
-      if (extension === 'xls' || extension === 'xlsx' || extension === 'csv') return 'xls';
-      return 'other';
-    };
-
-    const uploadedFiles: CourseFile[] = selectedFiles.map((file, index) => ({
-      id: `f-${Date.now()}-${index}`,
-      name: file.name,
-      type: normalizeType(file),
-      size: `${(file.size / (1024 * 1024)).toFixed(file.size >= 1024 * 1024 ? 1 : 2)} MB`,
-      date: new Date().toISOString().split('T')[0],
-    }));
-
-    const updatedCourse = {
-      ...selectedCourse,
-      files: [...selectedCourse.files, ...uploadedFiles],
-    };
-
-    onUpdateCourses(courses.map(c => c.id === selectedCourse.id ? updatedCourse : c));
-
-    if (courseFileInputRef.current) {
-      courseFileInputRef.current.value = '';
-    }
   };
 
   const handleAddTask = (e: React.FormEvent) => {
@@ -776,62 +806,35 @@ export const TeachingView: React.FC<TeachingViewProps> = ({ courses, tasks, onUp
 
             {/* Column 3: Files */}
             <div className="bg-slate-50 dark:bg-slate-950 flex flex-col h-full overflow-hidden">
-              <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 flex justify-between items-center backdrop-blur-sm sticky top-0 z-10">
-                <h3 className="font-semibold text-slate-800 dark:text-white flex items-center gap-2">
-                  <FileText size={18} className="text-amber-500 dark:text-amber-400" />
-                  Files
-                </h3>
-                <input
-                  type="file"
-                  ref={courseFileInputRef}
-                  onChange={handleCourseFilesSelected}
-                  multiple
-                  className="hidden"
+              <div className="flex-1 overflow-y-auto p-4">
+                <AttachmentPanel
+                  title="Files"
+                  attachments={selectedCourse.files}
+                  emptyMessage="No files uploaded."
+                  onUpload={() => void handleUploadFile()}
+                  onOpen={file => void handleOpenFile(file)}
+                  onDelete={file =>
+                    requestDelete({
+                      category: 'course-files',
+                      confirmCategoryLabel: 'course files',
+                      itemName: file.name,
+                      itemType: 'Course File',
+                      onConfirm: () => {
+                        void handleDeleteFile(file);
+                      },
+                    })
+                  }
+                  uploadDisabled={!dataFilePath}
+                  uploadHint={
+                    dataFilePath
+                      ? 'Uploaded files are copied into the same folder as your FacultyOne JSON file.'
+                      : 'Choose a local JSON save file to store course attachments beside it.'
+                  }
+                  error={attachmentError}
+                  isBusy={isAttachmentBusy}
+                  busyFileId={activeAttachmentId}
+                  className="h-full"
                 />
-                <button 
-                  onClick={handleUploadFile}
-                  className="text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/30 p-1.5 rounded-lg transition-colors text-xs font-medium flex items-center gap-1"
-                >
-                  <Upload size={14} /> Upload
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {selectedCourse.files.length === 0 && (
-                     <div className="text-center text-slate-400 dark:text-slate-500 py-8 text-sm">
-                        No files uploaded.
-                     </div>
-                )}
-                {selectedCourse.files.map(file => (
-                  <div key={file.id} className="bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3 hover:shadow-sm transition-shadow group">
-                    <div className="w-10 h-10 bg-amber-50 dark:bg-amber-900/30 rounded-lg flex items-center justify-center text-amber-600 dark:text-amber-400 font-bold text-xs uppercase">
-                        {file.type}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{file.name}</div>
-                        <div className="text-xs text-slate-400 dark:text-slate-500">{file.size} • {file.date}</div>
-                    </div>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                         <button className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-400">
-                             <Download size={14} />
-                         </button>
-                         <button 
-                            onClick={() =>
-                              requestDelete({
-                                category: 'course-files',
-                                confirmCategoryLabel: 'course files',
-                                itemName: file.name,
-                                itemType: 'Course File',
-                                onConfirm: () => handleDeleteFile(file.id),
-                              })
-                            }
-                            className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 rounded text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400"
-                         >
-                             <Trash2 size={14} />
-                         </button>
-                    </div>
-                  </div>
-                ))}
               </div>
             </div>
 

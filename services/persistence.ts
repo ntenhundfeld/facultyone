@@ -1,4 +1,4 @@
-import { AppData } from '../types';
+import { AppData, AttachmentFile, Course, Personnel, ResearchProject, ServiceRole, Student } from '../types';
 import { normalizeResearchStages } from '../utils/researchStages';
 import { AISettingsSnapshot, DEFAULT_OPENAI_MODEL } from './aiSettings';
 
@@ -13,7 +13,8 @@ export type DeleteConfirmationCategory =
   | 'research-notes'
   | 'student-notes'
   | 'students'
-  | 'course-files';
+  | 'course-files'
+  | 'attachments';
 
 export interface PersistedAppData {
   data: AppData;
@@ -105,6 +106,199 @@ const normalizeAISettings = (value: unknown): AISettingsSnapshot | undefined => 
   };
 };
 
+const normalizeAttachmentType = (value: unknown): AttachmentFile['type'] => {
+  switch (value) {
+    case 'pdf':
+    case 'doc':
+    case 'xls':
+    case 'image':
+      return value;
+    default:
+      return 'other';
+  }
+};
+
+const normalizeAttachment = (value: unknown): AttachmentFile | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<AttachmentFile>;
+  if (typeof candidate.id !== 'string' || typeof candidate.name !== 'string') {
+    return null;
+  }
+
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    type: normalizeAttachmentType(candidate.type),
+    size: typeof candidate.size === 'string' ? candidate.size : 'Unknown size',
+    date: typeof candidate.date === 'string' ? candidate.date : new Date(0).toISOString().split('T')[0],
+    storedFileName:
+      typeof candidate.storedFileName === 'string' && candidate.storedFileName.trim()
+        ? candidate.storedFileName.trim()
+        : undefined,
+  };
+};
+
+const normalizeAttachments = (value: unknown) =>
+  Array.isArray(value)
+    ? value
+        .map(normalizeAttachment)
+        .filter((attachment): attachment is AttachmentFile => attachment !== null)
+    : [];
+
+const normalizeStudent = (value: unknown): Student | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<Student>;
+  if (typeof candidate.id !== 'string' || typeof candidate.name !== 'string' || typeof candidate.email !== 'string') {
+    return null;
+  }
+
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    email: candidate.email,
+    status:
+      candidate.status === 'Waitlist' || candidate.status === 'Dropped' || candidate.status === 'Enrolled'
+        ? candidate.status
+        : 'Enrolled',
+    universityId: typeof candidate.universityId === 'string' ? candidate.universityId : undefined,
+    major: typeof candidate.major === 'string' ? candidate.major : undefined,
+    notes: Array.isArray(candidate.notes) ? candidate.notes.filter((note): note is string => typeof note === 'string') : [],
+  };
+};
+
+const normalizeCourse = (value: unknown): Course | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<Course>;
+  if (
+    typeof candidate.id !== 'string' ||
+    typeof candidate.code !== 'string' ||
+    typeof candidate.name !== 'string' ||
+    typeof candidate.semester !== 'string'
+  ) {
+    return null;
+  }
+
+  const students = Array.isArray(candidate.students)
+    ? candidate.students
+        .map(normalizeStudent)
+        .filter((student): student is Student => student !== null)
+    : [];
+
+  return {
+    id: candidate.id,
+    code: candidate.code,
+    name: candidate.name,
+    semester: candidate.semester,
+    studentCount: typeof candidate.studentCount === 'number' ? candidate.studentCount : students.length,
+    students,
+    files: normalizeAttachments(candidate.files),
+  };
+};
+
+const normalizePersonnelRecord = (value: unknown): Personnel | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<Personnel>;
+  if (
+    typeof candidate.id !== 'string' ||
+    typeof candidate.name !== 'string' ||
+    typeof candidate.role !== 'string' ||
+    typeof candidate.email !== 'string' ||
+    typeof candidate.department !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    id: candidate.id,
+    honorific:
+      candidate.honorific === 'Dr.' ||
+      candidate.honorific === 'Prof.' ||
+      candidate.honorific === 'Mr.' ||
+      candidate.honorific === 'Miss' ||
+      candidate.honorific === 'Mrs.' ||
+      candidate.honorific === 'Ms.'
+        ? candidate.honorific
+        : undefined,
+    name: candidate.name,
+    role: candidate.role,
+    email: candidate.email,
+    phone: typeof candidate.phone === 'string' ? candidate.phone : undefined,
+    department: candidate.department,
+    performanceNotes: Array.isArray(candidate.performanceNotes)
+      ? candidate.performanceNotes.filter((note): note is string => typeof note === 'string')
+      : [],
+    files: normalizeAttachments(candidate.files),
+  };
+};
+
+const normalizeProject = (value: unknown): ResearchProject | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<ResearchProject>;
+  if (
+    typeof candidate.id !== 'string' ||
+    typeof candidate.title !== 'string' ||
+    typeof candidate.abstract !== 'string' ||
+    typeof candidate.stage !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    id: candidate.id,
+    title: candidate.title,
+    abstract: candidate.abstract,
+    stage: candidate.stage,
+    collaborators: Array.isArray(candidate.collaborators)
+      ? candidate.collaborators.filter((collaborator): collaborator is string => typeof collaborator === 'string')
+      : [],
+    notes: Array.isArray(candidate.notes) ? candidate.notes.filter((note): note is string => typeof note === 'string') : [],
+    files: normalizeAttachments(candidate.files),
+  };
+};
+
+const normalizeServiceRole = (value: unknown): ServiceRole | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<ServiceRole>;
+  if (
+    typeof candidate.id !== 'string' ||
+    typeof candidate.name !== 'string' ||
+    typeof candidate.role !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    role: candidate.role,
+    type:
+      candidate.type === 'Department' || candidate.type === 'University' || candidate.type === 'Professional'
+        ? candidate.type
+        : 'Department',
+    description: typeof candidate.description === 'string' ? candidate.description : undefined,
+    termEnd: typeof candidate.termEnd === 'string' ? candidate.termEnd : undefined,
+    files: normalizeAttachments(candidate.files),
+  };
+};
+
 export const isDesktopRuntime = () => Boolean(getDesktopBridge()?.isDesktop);
 
 export const supportsFileSystemAccess = () => browserSupportsFileSystemAccess() || isDesktopRuntime();
@@ -127,14 +321,34 @@ const normalizeAppData = (value: unknown): AppData | null => {
 
   return {
     tasks: Array.isArray(candidate.tasks) ? candidate.tasks : [],
-    personnel: Array.isArray(candidate.personnel) ? candidate.personnel : [],
-    projects: Array.isArray(candidate.projects) ? candidate.projects : [],
+    personnel: Array.isArray(candidate.personnel)
+      ? candidate.personnel
+          .map(normalizePersonnelRecord)
+          .filter((person): person is Personnel => person !== null)
+      : [],
+    projects: Array.isArray(candidate.projects)
+      ? candidate.projects
+          .map(normalizeProject)
+          .filter((project): project is ResearchProject => project !== null)
+      : [],
     researchStages: normalizeResearchStages(
       candidate.researchStages,
-      Array.isArray(candidate.projects) ? candidate.projects : [],
+      Array.isArray(candidate.projects)
+        ? candidate.projects
+            .map(normalizeProject)
+            .filter((project): project is ResearchProject => project !== null)
+        : [],
     ),
-    courses: Array.isArray(candidate.courses) ? candidate.courses : [],
-    serviceRoles: Array.isArray(candidate.serviceRoles) ? candidate.serviceRoles : [],
+    courses: Array.isArray(candidate.courses)
+      ? candidate.courses
+          .map(normalizeCourse)
+          .filter((course): course is Course => course !== null)
+      : [],
+    serviceRoles: Array.isArray(candidate.serviceRoles)
+      ? candidate.serviceRoles
+          .map(normalizeServiceRole)
+          .filter((role): role is ServiceRole => role !== null)
+      : [],
   };
 };
 

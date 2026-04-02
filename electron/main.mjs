@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,6 +40,39 @@ const createWindow = async () => {
 
 const ensureParentDirectory = async filePath => {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
+};
+
+const sanitizeSegment = value => {
+  const normalized = String(value ?? '')
+    .normalize('NFKD')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '');
+
+  return normalized || 'file';
+};
+
+const makeUniqueAttachmentFileName = async (targetDirectory, scope, parentId, originalName) => {
+  const extension = path.extname(originalName);
+  const originalBase = path.basename(originalName, extension);
+  const baseName = `${sanitizeSegment(scope)}-${sanitizeSegment(parentId)}-${sanitizeSegment(originalBase)}`.slice(0, 120);
+
+  let attempt = 0;
+
+  while (attempt < 500) {
+    const suffix = attempt === 0 ? '' : `-${attempt + 1}`;
+    const candidate = `${baseName}${suffix}${extension.toLowerCase()}`;
+    const candidatePath = path.join(targetDirectory, candidate);
+
+    try {
+      await fs.access(candidatePath);
+      attempt += 1;
+    } catch {
+      return candidate;
+    }
+  }
+
+  return `${baseName}-${Date.now()}${extension.toLowerCase()}`;
 };
 
 const registerStorageHandlers = () => {
@@ -104,6 +137,54 @@ const registerStorageHandlers = () => {
       path: selection.filePath,
       name: path.basename(selection.filePath),
     };
+  });
+
+  ipcMain.handle('storage:importAttachments', async (_event, payload) => {
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile', 'multiSelections'],
+    });
+
+    if (selection.canceled || selection.filePaths.length === 0) {
+      return [];
+    }
+
+    const targetDirectory = path.dirname(payload.dataFilePath);
+    await fs.mkdir(targetDirectory, { recursive: true });
+
+    const copiedFiles = [];
+
+    for (const sourcePath of selection.filePaths) {
+      const originalName = path.basename(sourcePath);
+      const storedFileName = await makeUniqueAttachmentFileName(
+        targetDirectory,
+        payload.scope,
+        payload.parentId,
+        originalName,
+      );
+      const targetPath = path.join(targetDirectory, storedFileName);
+
+      await fs.copyFile(sourcePath, targetPath);
+      const stats = await fs.stat(targetPath);
+
+      copiedFiles.push({
+        originalName,
+        storedFileName,
+        sizeBytes: stats.size,
+        copiedAt: new Date().toISOString(),
+      });
+    }
+
+    return copiedFiles;
+  });
+
+  ipcMain.handle('storage:openAttachment', async (_event, payload) => {
+    const targetPath = path.join(path.dirname(payload.dataFilePath), payload.storedFileName);
+    return shell.openPath(targetPath);
+  });
+
+  ipcMain.handle('storage:deleteAttachment', async (_event, payload) => {
+    const targetPath = path.join(path.dirname(payload.dataFilePath), payload.storedFileName);
+    await fs.rm(targetPath, { force: true });
   });
 };
 
