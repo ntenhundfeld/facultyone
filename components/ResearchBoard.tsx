@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { ResearchProject, Task, Status, Category, Priority } from '../types';
 import { createTask, toggleTaskDone, withTaskPriority, withTaskStatus } from '../utils/tasks';
 import { useDeleteConfirmation } from '../hooks/useDeleteConfirmation';
+import { AttachmentPanel } from './AttachmentPanel';
+import { deleteDesktopAttachment, importDesktopAttachments, openDesktopAttachment } from '../services/attachments';
 import { 
   Plus, 
   MoreHorizontal, 
@@ -20,6 +22,7 @@ interface ResearchBoardProps {
   projects: ResearchProject[];
   researchStages: string[];
   tasks: Task[];
+  dataFilePath?: string | null;
   onUpdateProjects: (projects: ResearchProject[]) => void;
   onUpdateResearchStages: (researchStages: string[]) => void;
   onUpdateTasks: (tasks: Task[]) => void;
@@ -27,7 +30,7 @@ interface ResearchBoardProps {
   initialSelectedId?: string | null;
 }
 
-export const ResearchBoard: React.FC<ResearchBoardProps> = ({ projects, researchStages, tasks, onUpdateProjects, onUpdateResearchStages, onUpdateTasks, onDeleteProject, initialSelectedId }) => {
+export const ResearchBoard: React.FC<ResearchBoardProps> = ({ projects, researchStages, tasks, dataFilePath, onUpdateProjects, onUpdateResearchStages, onUpdateTasks, onDeleteProject, initialSelectedId }) => {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(initialSelectedId || null);
   const { requestDelete, deleteConfirmationModal } = useDeleteConfirmation();
 
@@ -56,6 +59,9 @@ export const ResearchBoard: React.FC<ResearchBoardProps> = ({ projects, research
   const [newProjectAbstract, setNewProjectAbstract] = useState('');
   const [newProjectStage, setNewProjectStage] = useState(researchStages[0] ?? '');
   const [newProjectCollaborators, setNewProjectCollaborators] = useState('');
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [isAttachmentBusy, setIsAttachmentBusy] = useState(false);
+  const [activeAttachmentId, setActiveAttachmentId] = useState<string | null>(null);
 
   const selectedProject = projects.find(p => p.id === selectedProjectId);
 
@@ -135,6 +141,7 @@ export const ResearchBoard: React.FC<ResearchBoardProps> = ({ projects, research
       stage,
       collaborators,
       notes: [],
+      files: [],
     };
 
     onUpdateProjects([...projects, newProject]);
@@ -320,6 +327,79 @@ export const ResearchBoard: React.FC<ResearchBoardProps> = ({ projects, research
     onUpdateProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
   };
 
+  const handleUploadAttachment = async () => {
+    if (!selectedProject || !dataFilePath) {
+      setAttachmentError('Choose a local JSON save file first so attachments can be copied beside it.');
+      return;
+    }
+
+    try {
+      setIsAttachmentBusy(true);
+      const uploadedFiles = await importDesktopAttachments({
+        dataFilePath,
+        scope: 'research',
+        parentId: selectedProject.id,
+      });
+
+      if (uploadedFiles.length === 0) {
+        return;
+      }
+
+      const updatedProject = {
+        ...selectedProject,
+        files: [...selectedProject.files, ...uploadedFiles],
+      };
+
+      onUpdateProjects(projects.map(project => (project.id === selectedProject.id ? updatedProject : project)));
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not import the selected project files.');
+    } finally {
+      setIsAttachmentBusy(false);
+    }
+  };
+
+  const handleOpenAttachment = async (file: ResearchProject['files'][number]) => {
+    if (!dataFilePath) {
+      return;
+    }
+
+    try {
+      setActiveAttachmentId(file.id);
+      await openDesktopAttachment(dataFilePath, file);
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not open the selected project file.');
+    } finally {
+      setActiveAttachmentId(null);
+    }
+  };
+
+  const handleDeleteAttachment = async (file: ResearchProject['files'][number]) => {
+    if (!selectedProject) {
+      return;
+    }
+
+    try {
+      setActiveAttachmentId(file.id);
+      if (dataFilePath) {
+        await deleteDesktopAttachment(dataFilePath, file);
+      }
+
+      const updatedProject = {
+        ...selectedProject,
+        files: selectedProject.files.filter(existing => existing.id !== file.id),
+      };
+
+      onUpdateProjects(projects.map(project => (project.id === selectedProject.id ? updatedProject : project)));
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not remove the selected project file.');
+    } finally {
+      setActiveAttachmentId(null);
+    }
+  };
+
   const getNotePreview = (note: string) => {
     const trimmed = note.trim();
     if (!trimmed) {
@@ -488,6 +568,34 @@ export const ResearchBoard: React.FC<ResearchBoardProps> = ({ projects, research
                                 </button>
                             </form>
                         </div>
+
+                        <AttachmentPanel
+                          title="Project Files"
+                          attachments={selectedProject.files}
+                          emptyMessage="No project files uploaded yet."
+                          onUpload={() => void handleUploadAttachment()}
+                          onOpen={file => void handleOpenAttachment(file)}
+                          onDelete={file =>
+                            requestDelete({
+                              category: 'attachments',
+                              confirmCategoryLabel: 'attachments',
+                              itemName: file.name,
+                              itemType: 'Project File',
+                              onConfirm: () => {
+                                void handleDeleteAttachment(file);
+                              },
+                            })
+                          }
+                          uploadDisabled={!dataFilePath}
+                          uploadHint={
+                            dataFilePath
+                              ? 'Uploaded files are copied into the same folder as your FacultyOne JSON file.'
+                              : 'Choose a local JSON save file to store project attachments beside it.'
+                          }
+                          error={attachmentError}
+                          isBusy={isAttachmentBusy}
+                          busyFileId={activeAttachmentId}
+                        />
                     </div>
 
                     {/* Right Column: Tasks (Spans 2 cols) */}

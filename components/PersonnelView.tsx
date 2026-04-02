@@ -2,6 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { Personnel, Task, Status, Category, Priority } from '../types';
 import { createTask, toggleTaskDone, withTaskPriority, withTaskStatus } from '../utils/tasks';
 import { useDeleteConfirmation } from '../hooks/useDeleteConfirmation';
+import { AttachmentPanel } from './AttachmentPanel';
+import { deleteDesktopAttachment, importDesktopAttachments, openDesktopAttachment } from '../services/attachments';
 import {
   Pencil,
   FileText,
@@ -23,6 +25,7 @@ import {
 interface PersonnelViewProps {
   personnelList: Personnel[];
   tasks: Task[];
+  dataFilePath?: string | null;
   onUpdateTasks: (tasks: Task[]) => void;
   onAddPersonnel: (personnel: Personnel) => void;
   onUpdatePersonnel: (personnel: Personnel[]) => void;
@@ -40,6 +43,7 @@ const getDisplayName = (person: Personnel) => `${person.honorific ? `${person.ho
 export const PersonnelView: React.FC<PersonnelViewProps> = ({
   personnelList,
   tasks,
+  dataFilePath,
   onUpdateTasks,
   onAddPersonnel,
   onUpdatePersonnel,
@@ -108,6 +112,9 @@ export const PersonnelView: React.FC<PersonnelViewProps> = ({
   const [newPersonnelPhone, setNewPersonnelPhone] = useState('');
   const [newPersonnelDept, setNewPersonnelDept] = useState('');
   const [newPerformanceNote, setNewPerformanceNote] = useState('');
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [isAttachmentBusy, setIsAttachmentBusy] = useState(false);
+  const [activeAttachmentId, setActiveAttachmentId] = useState<string | null>(null);
 
   const roleOptions = useMemo(
     () => Array.from(new Set(personnelList.map(person => person.role))).sort((left, right) => left.localeCompare(right)),
@@ -226,6 +233,7 @@ export const PersonnelView: React.FC<PersonnelViewProps> = ({
       phone: newPersonnelPhone.trim() || undefined,
       department: newPersonnelDept || 'General',
       performanceNotes: [],
+      files: [],
     };
 
     onAddPersonnel(newPersonnel);
@@ -259,6 +267,75 @@ export const PersonnelView: React.FC<PersonnelViewProps> = ({
       ...person,
       performanceNotes: person.performanceNotes.filter((_, index) => index !== noteIndex),
     }));
+  };
+
+  const handleUploadAttachment = async () => {
+    if (!selectedPersonnel || !dataFilePath) {
+      setAttachmentError('Choose a local JSON save file first so attachments can be copied beside it.');
+      return;
+    }
+
+    try {
+      setIsAttachmentBusy(true);
+      const uploadedFiles = await importDesktopAttachments({
+        dataFilePath,
+        scope: 'personnel',
+        parentId: selectedPersonnel.id,
+      });
+
+      if (uploadedFiles.length === 0) {
+        return;
+      }
+
+      updateSelectedPersonnel(person => ({
+        ...person,
+        files: [...person.files, ...uploadedFiles],
+      }));
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not import the selected personnel files.');
+    } finally {
+      setIsAttachmentBusy(false);
+    }
+  };
+
+  const handleOpenAttachment = async (file: Personnel['files'][number]) => {
+    if (!dataFilePath) {
+      return;
+    }
+
+    try {
+      setActiveAttachmentId(file.id);
+      await openDesktopAttachment(dataFilePath, file);
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not open the selected personnel file.');
+    } finally {
+      setActiveAttachmentId(null);
+    }
+  };
+
+  const handleDeleteAttachment = async (file: Personnel['files'][number]) => {
+    if (!selectedPersonnel) {
+      return;
+    }
+
+    try {
+      setActiveAttachmentId(file.id);
+      if (dataFilePath) {
+        await deleteDesktopAttachment(dataFilePath, file);
+      }
+
+      updateSelectedPersonnel(person => ({
+        ...person,
+        files: person.files.filter(existing => existing.id !== file.id),
+      }));
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not remove the selected personnel file.');
+    } finally {
+      setActiveAttachmentId(null);
+    }
   };
 
   const getNotePreview = (note: string) => {
@@ -709,6 +786,34 @@ export const PersonnelView: React.FC<PersonnelViewProps> = ({
               </div>
 
               <div className="space-y-8">
+                <AttachmentPanel
+                  title="Personnel Files"
+                  attachments={selectedPersonnel.files}
+                  emptyMessage="No personnel files uploaded yet."
+                  onUpload={() => void handleUploadAttachment()}
+                  onOpen={file => void handleOpenAttachment(file)}
+                  onDelete={file =>
+                    requestDelete({
+                      category: 'attachments',
+                      confirmCategoryLabel: 'attachments',
+                      itemName: file.name,
+                      itemType: 'Personnel File',
+                      onConfirm: () => {
+                        void handleDeleteAttachment(file);
+                      },
+                    })
+                  }
+                  uploadDisabled={!dataFilePath}
+                  uploadHint={
+                    dataFilePath
+                      ? 'Uploaded files are copied into the same folder as your FacultyOne JSON file.'
+                      : 'Choose a local JSON save file to store personnel attachments beside it.'
+                  }
+                  error={attachmentError}
+                  isBusy={isAttachmentBusy}
+                  busyFileId={activeAttachmentId}
+                />
+
                 <div className="space-y-4">
                   <h3 className="flex items-center gap-2 font-semibold text-slate-800 dark:text-white">
                     <FileText size={18} />

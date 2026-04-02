@@ -11,4 +11,7 @@ contextBridge.exposeInMainWorld('academicDevOpsDesktop', {
       contents,
     }),
   chooseDataFile: options => ipcRenderer.invoke('storage:chooseDataFile', options),
+  importAttachments: options => ipcRenderer.invoke('storage:importAttachments', options),
+  openAttachment: options => ipcRenderer.invoke('storage:openAttachment', options),
+  deleteAttachment: options => ipcRenderer.invoke('storage:deleteAttachment', options),
 });

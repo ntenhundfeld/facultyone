@@ -28,6 +28,7 @@ export interface ServiceRole {
   type: 'Department' | 'University' | 'Professional';
   description?: string;
   termEnd?: string;
+  files: AttachmentFile[];
 }
 
 export interface Task {
@@ -57,6 +58,7 @@ export interface Personnel {
   phone?: string;
   department: string;
   performanceNotes: string[];
+  files: AttachmentFile[];
 }
 
 export interface ResearchProject {
@@ -66,6 +68,7 @@ export interface ResearchProject {
   stage: string;
   collaborators: string[];
   notes: string[];
+  files: AttachmentFile[];
 }
 
 export interface Student {
@@ -78,13 +81,16 @@ export interface Student {
   notes?: string[];
 }
 
-export interface CourseFile {
+export interface AttachmentFile {
   id: string;
   name: string;
-  type: 'pdf' | 'doc' | 'xls' | 'other';
+  type: 'pdf' | 'doc' | 'xls' | 'image' | 'other';
   size: string;
   date: string;
+  storedFileName?: string;
 }
+
+export type CourseFile = AttachmentFile;
 
 export interface Course {
   id: string;

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { ServiceRole, Task, Status, Category, Priority } from '../types';
 import { createTask, toggleTaskDone, withTaskPriority } from '../utils/tasks';
 import { useDeleteConfirmation } from '../hooks/useDeleteConfirmation';
+import { AttachmentPanel } from './AttachmentPanel';
+import { deleteDesktopAttachment, importDesktopAttachments, openDesktopAttachment } from '../services/attachments';
 import { 
   Plus, 
   MoreHorizontal, 
@@ -20,6 +22,7 @@ import {
 interface ServiceViewProps {
   serviceRoles: ServiceRole[];
   tasks: Task[];
+  dataFilePath?: string | null;
   onUpdateServiceRoles: (roles: ServiceRole[]) => void;
   onUpdateTasks: (tasks: Task[]) => void;
   onDeleteServiceRole: (id: string) => void;
@@ -28,7 +31,7 @@ interface ServiceViewProps {
 
 const SERVICE_TYPES = ['Department', 'University', 'Professional'] as const;
 
-export const ServiceView: React.FC<ServiceViewProps> = ({ serviceRoles, tasks, onUpdateServiceRoles, onUpdateTasks, onDeleteServiceRole, initialSelectedId }) => {
+export const ServiceView: React.FC<ServiceViewProps> = ({ serviceRoles, tasks, dataFilePath, onUpdateServiceRoles, onUpdateTasks, onDeleteServiceRole, initialSelectedId }) => {
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(initialSelectedId || null);
   const { requestDelete, deleteConfirmationModal } = useDeleteConfirmation();
 
@@ -51,6 +54,9 @@ export const ServiceView: React.FC<ServiceViewProps> = ({ serviceRoles, tasks, o
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState<Priority>(Priority.MEDIUM);
   const [newTaskDueDate, setNewTaskDueDate] = useState('');
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [isAttachmentBusy, setIsAttachmentBusy] = useState(false);
+  const [activeAttachmentId, setActiveAttachmentId] = useState<string | null>(null);
 
   const selectedRole = serviceRoles.find(r => r.id === selectedRoleId);
 
@@ -95,7 +101,8 @@ export const ServiceView: React.FC<ServiceViewProps> = ({ serviceRoles, tasks, o
       name: newRoleName,
       role: newRoleTitle,
       type: newRoleType,
-      termEnd: newRoleTerm || undefined
+      termEnd: newRoleTerm || undefined,
+      files: [],
     };
 
     onUpdateServiceRoles([...serviceRoles, newRole]);
@@ -122,6 +129,79 @@ export const ServiceView: React.FC<ServiceViewProps> = ({ serviceRoles, tasks, o
     setNewTaskTitle('');
     setNewTaskPriority(Priority.MEDIUM);
     setNewTaskDueDate('');
+  };
+
+  const handleUploadAttachment = async () => {
+    if (!selectedRole || !dataFilePath) {
+      setAttachmentError('Choose a local JSON save file first so attachments can be copied beside it.');
+      return;
+    }
+
+    try {
+      setIsAttachmentBusy(true);
+      const uploadedFiles = await importDesktopAttachments({
+        dataFilePath,
+        scope: 'service',
+        parentId: selectedRole.id,
+      });
+
+      if (uploadedFiles.length === 0) {
+        return;
+      }
+
+      const updatedRole = {
+        ...selectedRole,
+        files: [...selectedRole.files, ...uploadedFiles],
+      };
+
+      onUpdateServiceRoles(serviceRoles.map(role => (role.id === selectedRole.id ? updatedRole : role)));
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not import the selected service files.');
+    } finally {
+      setIsAttachmentBusy(false);
+    }
+  };
+
+  const handleOpenAttachment = async (file: ServiceRole['files'][number]) => {
+    if (!dataFilePath) {
+      return;
+    }
+
+    try {
+      setActiveAttachmentId(file.id);
+      await openDesktopAttachment(dataFilePath, file);
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not open the selected service file.');
+    } finally {
+      setActiveAttachmentId(null);
+    }
+  };
+
+  const handleDeleteAttachment = async (file: ServiceRole['files'][number]) => {
+    if (!selectedRole) {
+      return;
+    }
+
+    try {
+      setActiveAttachmentId(file.id);
+      if (dataFilePath) {
+        await deleteDesktopAttachment(dataFilePath, file);
+      }
+
+      const updatedRole = {
+        ...selectedRole,
+        files: selectedRole.files.filter(existing => existing.id !== file.id),
+      };
+
+      onUpdateServiceRoles(serviceRoles.map(role => (role.id === selectedRole.id ? updatedRole : role)));
+      setAttachmentError(null);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not remove the selected service file.');
+    } finally {
+      setActiveAttachmentId(null);
+    }
   };
 
   const toggleTaskStatus = (taskId: string) => {
@@ -291,7 +371,7 @@ export const ServiceView: React.FC<ServiceViewProps> = ({ serviceRoles, tasks, o
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto p-8">
-                <div className="max-w-4xl mx-auto">
+                <div className="max-w-4xl mx-auto space-y-6">
                     <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
                         <div className="p-6 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50">
                             <h3 className="font-semibold text-slate-800 dark:text-white flex items-center gap-2">
@@ -379,6 +459,34 @@ export const ServiceView: React.FC<ServiceViewProps> = ({ serviceRoles, tasks, o
                             </div>
                         </div>
                     </div>
+
+                    <AttachmentPanel
+                        title="Service Files"
+                        attachments={selectedRole.files}
+                        emptyMessage="No service files uploaded yet."
+                        onUpload={() => void handleUploadAttachment()}
+                        onOpen={file => void handleOpenAttachment(file)}
+                        onDelete={file =>
+                          requestDelete({
+                            category: 'attachments',
+                            confirmCategoryLabel: 'attachments',
+                            itemName: file.name,
+                            itemType: 'Service File',
+                            onConfirm: () => {
+                              void handleDeleteAttachment(file);
+                            },
+                          })
+                        }
+                        uploadDisabled={!dataFilePath}
+                        uploadHint={
+                          dataFilePath
+                            ? 'Uploaded files are copied into the same folder as your FacultyOne JSON file.'
+                            : 'Choose a local JSON save file to store service attachments beside it.'
+                        }
+                        error={attachmentError}
+                        isBusy={isAttachmentBusy}
+                        busyFileId={activeAttachmentId}
+                    />
                 </div>
             </div>
 

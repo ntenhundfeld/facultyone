@@ -24,58 +24,6 @@ const INITIAL_PERSONNEL: Personnel[] = [];
 const INITIAL_PROJECTS: ResearchProject[] = [];
 const INITIAL_COURSES: Course[] = [];
 
-const LEGACY_SAMPLE_PROJECT_IDS = new Set(['RP-101', 'RP-102', 'RP-103', 'RP-104']);
-const LEGACY_SAMPLE_SERVICE_ROLE_IDS = new Set(['svc1', 'svc2', 'svc3']);
-const LEGACY_SAMPLE_PERSONNEL_IDS = new Set(['f1', 'f2', 'f3']);
-const LEGACY_SAMPLE_COURSE_IDS = new Set(['c1', 'c2', 'c3']);
-
-const isLegacySampleTask = (task: Task) =>
-  (
-    task.title === 'Grade Final Papers for CS501' &&
-    task.category === Category.TEACHING &&
-    task.courseId === 'c1'
-  ) ||
-  (
-    task.title === 'Submit NSF Grant Proposal' &&
-    task.category === Category.RESEARCH &&
-    task.projectId === 'RP-101'
-  ) ||
-  (
-    task.title === 'Yearly Review: Dr. Smith' &&
-    task.category === Category.PERSONNEL &&
-    task.relatedPersonnelId === 'f1'
-  ) ||
-  (
-    task.title === 'Update Syllabus for Summer Term' &&
-    task.category === Category.TEACHING &&
-    task.courseId === 'c2'
-  ) ||
-  (
-    task.title === 'Approve Department Budget' &&
-    task.category === Category.SERVICE &&
-    task.serviceRoleId === 'svc1'
-  ) ||
-  (
-    task.title === 'Draft Methodology Section' &&
-    task.category === Category.RESEARCH &&
-    task.projectId === 'RP-101'
-  ) ||
-  (
-    task.title === 'Submit Annual Self-Evaluation' &&
-    task.category === Category.PERSONNEL &&
-    task.relatedPersonnelId === 'f1' &&
-    task.assigneeId === 'f1'
-  );
-
-const stripLegacySampleData = (data: AppData): AppData => ({
-  ...data,
-  tasks: data.tasks.filter(task => !isLegacySampleTask(task)),
-  personnel: data.personnel.filter(person => !LEGACY_SAMPLE_PERSONNEL_IDS.has(person.id)),
-  projects: data.projects.filter(project => !LEGACY_SAMPLE_PROJECT_IDS.has(project.id)),
-  courses: data.courses.filter(course => !LEGACY_SAMPLE_COURSE_IDS.has(course.id)),
-  serviceRoles: data.serviceRoles.filter(role => !LEGACY_SAMPLE_SERVICE_ROLE_IDS.has(role.id)),
-});
-
 const DEFAULT_APP_DATA: AppData = {
   tasks: INITIAL_TASKS.map(normalizeTask),
   personnel: INITIAL_PERSONNEL,
@@ -100,7 +48,7 @@ const App: React.FC = () => {
       browserSeed
         ? {
             ...browserSeed,
-            data: stripLegacySampleData(browserSeed.data),
+            data: browserSeed.data,
           }
         : null,
     [browserSeed],
@@ -141,6 +89,10 @@ const App: React.FC = () => {
   const skipNextFileWriteRef = useRef(false);
 
   const { tasks, personnel, projects, researchStages, courses, serviceRoles } = appData;
+  const dataFilePath =
+    storageMode === 'file' && storageFileHandle && 'kind' in storageFileHandle && storageFileHandle.kind === 'desktop-file'
+      ? storageFileHandle.path
+      : loadStorageFilePath();
 
   useEffect(() => {
     if (!usesDesktopRuntime) {
@@ -196,7 +148,7 @@ const App: React.FC = () => {
           return;
         }
 
-        const sanitizedData = stripLegacySampleData(resumed.data);
+        const sanitizedData = resumed.data;
         setAppData({
           ...sanitizedData,
           tasks: sanitizedData.tasks.map(normalizeTask),
@@ -561,7 +513,7 @@ const App: React.FC = () => {
     try {
       setIsStorageBusy(true);
       const resumed = await resumeStoredFile(true);
-      const sanitizedData = stripLegacySampleData(resumed.data);
+      const sanitizedData = resumed.data;
       setStorageFileHandle(resumed.handle);
       setStorageFileName(resumed.fileName);
       setAppData({
@@ -591,7 +543,7 @@ const App: React.FC = () => {
         data: appData,
         aiSettings: buildAISettingsSnapshot(aiApiKey, aiModel),
       });
-      const sanitizedData = stripLegacySampleData(resumed.data);
+      const sanitizedData = resumed.data;
       setStorageFileHandle(resumed.handle);
       setStorageFileName(resumed.fileName);
       setAppData({
@@ -662,6 +614,7 @@ const App: React.FC = () => {
             projects={projects}
             researchStages={researchStages}
             tasks={tasks}
+            dataFilePath={dataFilePath}
             onUpdateProjects={updateProjects}
             onUpdateResearchStages={updateResearchStages}
             onUpdateTasks={updateTasks}
@@ -674,6 +627,7 @@ const App: React.FC = () => {
           <PersonnelView
             personnelList={personnel}
             tasks={tasks}
+            dataFilePath={dataFilePath}
             onUpdateTasks={updateTasks}
             onAddPersonnel={handleAddPersonnel}
             onUpdatePersonnel={updatePersonnel}
@@ -686,6 +640,7 @@ const App: React.FC = () => {
           <TeachingView
             courses={courses}
             tasks={tasks}
+            dataFilePath={dataFilePath}
             onUpdateCourses={updateCourses}
             onUpdateTasks={updateTasks}
             onDeleteCourse={handleDeleteCourse}
@@ -697,6 +652,7 @@ const App: React.FC = () => {
           <ServiceView
             serviceRoles={serviceRoles}
             tasks={tasks}
+            dataFilePath={dataFilePath}
             onUpdateServiceRoles={updateServiceRoles}
             onUpdateTasks={updateTasks}
             onDeleteServiceRole={handleDeleteServiceRole}
