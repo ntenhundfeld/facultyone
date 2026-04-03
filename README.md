@@ -1,6 +1,13 @@
 # FacultyOne
 
-FacultyOne is a local-first academic operations dashboard for program chairs and research leads. It combines research pipeline tracking, teaching and service management, personnel oversight, task planning, and an optional in-app ChatGPT assistant.
+FacultyOne is a local-first academic operations dashboard for professors. It combines research pipeline tracking, teaching and service management, personnel oversight, task planning, and an optional in-app ChatGPT assistant.
+
+<img width="1552" height="1072" alt="Screenshot 2026-04-03 at 7 57 39 AM" src="https://github.com/user-attachments/assets/c10e8c79-a42c-4ed8-bb69-7e9019cd943c" />
+
+<img width="1552" height="1072" alt="Screenshot 2026-04-03 at 7 58 09 AM" src="https://github.com/user-attachments/assets/c605f754-476e-415d-ac2f-927d8110300c" />
+
+<img width="1552" height="1072" alt="Screenshot 2026-04-03 at 7 59 33 AM" src="https://github.com/user-attachments/assets/9ff0b27f-d905-479c-9d54-2209ac509c19" />
+
 
 ## Highlights
 
